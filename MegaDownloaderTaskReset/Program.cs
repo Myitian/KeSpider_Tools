@@ -1,5 +1,7 @@
 ﻿using Microsoft.VisualBasic.FileIO;
+using System.Buffers;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Xml;
@@ -23,7 +25,8 @@ class Program
             string[] command = ParseCommand(Console.ReadLine());
             if (command.Length < 1)
                 continue;
-            ReadOnlySpan<char> arg = command.Length > 1 ? command[1] : [];
+            ReadOnlySpan<char> arg1 = command.Length > 1 ? command[1] : [];
+            ReadOnlySpan<char> arg2 = command.Length > 2 ? command[2] : [];
             try
             {
                 switch (command[0].ToLower())
@@ -47,18 +50,21 @@ class Program
                     case "help":
                         Console.WriteLine("""
                             帮助：
-                            命令    | 参数     | 别名             | 说明
-                            quit      无         q, exit            退出
-                            help      无         ?, h               帮助
-                            version   无         v, ver             版本
-                            info      无         i, information     基本信息
-                            list      无         l                  文件列表
-                            reload    无         r                  重新加载
-                            mkdir     无                            补全目录结构
-                            save      无         s                  保存
-                            save-as   文件路径   sa, saveas         另存为
-                            find      查询内容   f, query, search   查询
-                            reset     无         rst                重置下载状态
+                            命令      | 参数     | 别名             | 说明
+                            quit        无         q, exit            退出
+                            help        无         ?, h               帮助
+                            version     无         v, ver             版本
+                            info        无         i, information     基本信息
+                            list        无         l                  文件列表
+                            reload      无         r                  重新加载
+                            mkdir       无                            补全目录结构
+                            priority    无         p                  按照当前顺序重新设置优先级
+                            sort-pkg    排序字段                      重排包
+                            sort-file   排序字段                      重排文件
+                            save        无         s                  保存
+                            save-as     文件路径   sa, saveas         另存为
+                            find        查询内容   f, query, search   查询
+                            reset       无         rst                重置下载状态
                             """);
                         break;
                     case "v":
@@ -84,23 +90,65 @@ class Program
                         {
                             if (package["ListaFicheros"] is not XmlNode files || package["Nombre"] is not XmlNode packageName)
                                 continue;
-                            Console.WriteLine($"- 包 \"{packageName.Value}\"：{files.ChildNodes.Count}个文件");
+                            Console.Write("- 包 ");
+                            Console.ForegroundColor = ConsoleColor.DarkYellow;
+                            Console.Write('"');
+                            Console.ForegroundColor = ConsoleColor.Yellow;
+                            Console.Write(packageName.Value);
+                            Console.ForegroundColor = ConsoleColor.DarkYellow;
+                            Console.Write('"');
+                            Console.ResetColor();
+                            Console.Write('：');
+                            Console.ForegroundColor = ConsoleColor.Cyan;
+                            Console.Write(files.ChildNodes.Count);
+                            Console.ResetColor();
+                            Console.WriteLine("个文件");
                             foreach (XmlNode file in files.ChildNodes)
                             {
                                 if (file["URL"] is not XmlNode urlNode
                                     || file["NombreFichero"] is not XmlNode fileName)
                                     continue;
-                                Console.WriteLine($"  - 文件 \"{Path.Combine(file["RutaRelativa"]?.Value ?? "", fileName.Value)}\"");
+                                Console.Write("  - 文件 ");
+                                Console.ForegroundColor = ConsoleColor.DarkYellow;
+                                Console.Write('"');
+                                Console.ForegroundColor = ConsoleColor.Yellow;
+                                Console.Write(Path.Combine(file["RutaRelativa"]?.Value ?? "", fileName.Value));
+                                Console.ForegroundColor = ConsoleColor.DarkYellow;
+                                Console.WriteLine('"');
+                                Console.ResetColor();
                                 string url = DecryptString(urlNode.Value);
-                                Console.WriteLine($"    - URL: {url}");
+                                Console.Write("    - URL: ");
+                                Console.ForegroundColor = ConsoleColor.Green;
+                                Console.WriteLine(url);
+                                Console.ResetColor();
                                 if (file["FileID"] is XmlNode id)
-                                    Console.WriteLine($"    - FileID: {DecryptString(id.Value)}");
+                                {
+                                    Console.Write("    - FileID: ");
+                                    Console.ForegroundColor = ConsoleColor.Blue;
+                                    Console.WriteLine(DecryptString(id.Value));
+                                    Console.ResetColor();
+                                }
                                 if (file["FileKey"] is XmlNode key)
-                                    Console.WriteLine($"    - FileKey: {DecryptString(key.Value)}");
+                                {
+                                    Console.Write("    - FileKey: ");
+                                    Console.ForegroundColor = ConsoleColor.Blue;
+                                    Console.WriteLine(DecryptString(key.Value));
+                                    Console.ResetColor();
+                                }
                                 if (file["Porcentaje"] is XmlNode percent)
-                                    Console.WriteLine($"    - Porcentaje: {percent.Value}");
+                                {
+                                    Console.Write("    - Porcentaje: ");
+                                    Console.ForegroundColor = ConsoleColor.Cyan;
+                                    Console.WriteLine(percent.Value);
+                                    Console.ResetColor();
+                                }
                                 if (file["EstadoDescarga"] is XmlNode est)
-                                    Console.WriteLine($"    - EstadoDescarga: {est.Value}");
+                                {
+                                    Console.Write("    - EstadoDescarga: ");
+                                    Console.ForegroundColor = ConsoleColor.Blue;
+                                    Console.WriteLine(est.Value);
+                                    Console.ResetColor();
+                                }
                             }
                         }
                         break;
@@ -137,6 +185,181 @@ class Program
                         }
                         Console.WriteLine("补全目录结构完成！");
                         break;
+                    case "p":
+                    case "priority":
+                        int counter = 0;
+                        foreach (XmlNode package in xml.ChildNodes)
+                        {
+                            string p = (++counter).ToString();
+                            if (package["Prioridad"] is not XmlNode priority)
+                            {
+                                priority = new XmlNode("Prioridad");
+                                package.AppendChild(priority);
+                            }
+                            priority.SetValue(p);
+
+                            if (package["ListaFicheros"] is not XmlNode files)
+                                continue;
+                            foreach (XmlNode file in files.ChildNodes)
+                            {
+                                p = (++counter).ToString();
+                                if (file["Prioridad"] is not XmlNode childPriority)
+                                {
+                                    childPriority = new XmlNode("Prioridad");
+                                    file.AppendChild(childPriority);
+                                }
+                                childPriority.SetValue(p);
+                            }
+                        }
+                        Console.WriteLine("设置优先级完成！");
+                        break;
+                    case "sort-pkg":
+                        if (arg1.IsEmpty)
+                        {
+                            Console.WriteLine("选择排序模式[priority/size/percent/name/localpath]+[asc/desc]：");
+                            string[] param = ParseCommand(Console.ReadLine());
+                            arg1 = param.Length > 0 ? param[0] : [];
+                            arg2 = param.Length > 1 ? param[1] : [];
+                        }
+                        if (arg2.IsEmpty)
+                        {
+                            Console.WriteLine("请指定升序还是降序！");
+                            break;
+                        }
+                        bool? asc = arg2 switch
+                        {
+                            "asc" => true,
+                            "desc" => false,
+                            _ => null,
+                        };
+                        if (asc is null)
+                        {
+                            Console.WriteLine("参数无效");
+                            break;
+                        }
+                        Span<XmlNode> nodeSpan = CollectionsMarshal.AsSpan(xml.ChildNodes);
+                        using (IMemoryOwner<XmlNode> tmpMemory = MemoryPool<XmlNode>.Shared.Rent(nodeSpan.Length))
+                        {
+                            switch (arg1)
+                            {
+                                case "priority" when asc is true:
+                                    MergeSort(nodeSpan, tmpMemory.Memory.Span, FieldComparers.PriorityAsc);
+                                    break;
+                                case "priority":
+                                    MergeSort(nodeSpan, tmpMemory.Memory.Span, FieldComparers.PriorityDesc);
+                                    break;
+                                case "size" when asc is true:
+                                    MergeSort(nodeSpan, tmpMemory.Memory.Span, FieldComparers.SizeAsc);
+                                    break;
+                                case "size":
+                                    MergeSort(nodeSpan, tmpMemory.Memory.Span, FieldComparers.SizeDesc);
+                                    break;
+                                case "percent" when asc is true:
+                                    MergeSort(nodeSpan, tmpMemory.Memory.Span, FieldComparers.PercentAsc);
+                                    break;
+                                case "percent":
+                                    MergeSort(nodeSpan, tmpMemory.Memory.Span, FieldComparers.PercentDesc);
+                                    break;
+                                case "name" when asc is true:
+                                    MergeSort(nodeSpan, tmpMemory.Memory.Span, FieldComparers.PackageNameAsc);
+                                    break;
+                                case "name":
+                                    MergeSort(nodeSpan, tmpMemory.Memory.Span, FieldComparers.PackageNameDesc);
+                                    break;
+                                case "localpath" when asc is true:
+                                    MergeSort(nodeSpan, tmpMemory.Memory.Span, FieldComparers.PackageLocalPathAsc);
+                                    break;
+                                case "localpath":
+                                    MergeSort(nodeSpan, tmpMemory.Memory.Span, FieldComparers.PackageLocalPathDesc);
+                                    break;
+                                default:
+                                    Console.WriteLine("排序模式无效");
+                                    break;
+                            }
+                        }
+                        Console.WriteLine("排序完成！");
+                        break;
+                    case "sort-file":
+                        if (arg1.IsEmpty)
+                        {
+                            Console.WriteLine("选择排序模式[priority/size/percent/name/url/localpath/relativepath]+[asc/desc]：");
+                            string[] param = ParseCommand(Console.ReadLine());
+                            arg1 = param.Length > 0 ? param[0] : [];
+                            arg2 = param.Length > 1 ? param[1] : [];
+                        }
+                        if (arg2.IsEmpty)
+                        {
+                            Console.WriteLine("请指定升序还是降序！");
+                            break;
+                        }
+                        asc = arg2 switch
+                        {
+                            "asc" => true,
+                            "desc" => false,
+                            _ => null,
+                        };
+                        if (asc is null)
+                        {
+                            Console.WriteLine("参数无效");
+                            break;
+                        }
+                        foreach (XmlNode package in xml.ChildNodes)
+                        {
+                            if (package["ListaFicheros"] is not XmlNode files)
+                                continue;
+                            nodeSpan = CollectionsMarshal.AsSpan(files.ChildNodes);
+                            using IMemoryOwner<XmlNode> tmpMemory = MemoryPool<XmlNode>.Shared.Rent(nodeSpan.Length);
+                            switch (arg1)
+                            {
+                                case "priority" when asc is true:
+                                    MergeSort(nodeSpan, tmpMemory.Memory.Span, FieldComparers.PriorityAsc);
+                                    break;
+                                case "priority":
+                                    MergeSort(nodeSpan, tmpMemory.Memory.Span, FieldComparers.PriorityDesc);
+                                    break;
+                                case "size" when asc is true:
+                                    MergeSort(nodeSpan, tmpMemory.Memory.Span, FieldComparers.SizeAsc);
+                                    break;
+                                case "size":
+                                    MergeSort(nodeSpan, tmpMemory.Memory.Span, FieldComparers.SizeDesc);
+                                    break;
+                                case "percent" when asc is true:
+                                    MergeSort(nodeSpan, tmpMemory.Memory.Span, FieldComparers.PercentAsc);
+                                    break;
+                                case "percent":
+                                    MergeSort(nodeSpan, tmpMemory.Memory.Span, FieldComparers.PercentDesc);
+                                    break;
+                                case "name" when asc is true:
+                                    MergeSort(nodeSpan, tmpMemory.Memory.Span, FieldComparers.FileNameAsc);
+                                    break;
+                                case "name":
+                                    MergeSort(nodeSpan, tmpMemory.Memory.Span, FieldComparers.FileNameDesc);
+                                    break;
+                                case "url" when asc is true:
+                                    MergeSort(nodeSpan, tmpMemory.Memory.Span, FieldComparers.FileUrlAsc);
+                                    break;
+                                case "url":
+                                    MergeSort(nodeSpan, tmpMemory.Memory.Span, FieldComparers.FileUrlDesc);
+                                    break;
+                                case "localpath" when asc is true:
+                                    MergeSort(nodeSpan, tmpMemory.Memory.Span, FieldComparers.FileLocalPathAsc);
+                                    break;
+                                case "localpath":
+                                    MergeSort(nodeSpan, tmpMemory.Memory.Span, FieldComparers.FileLocalPathDesc);
+                                    break;
+                                case "relativepath" when asc is true:
+                                    MergeSort(nodeSpan, tmpMemory.Memory.Span, FieldComparers.FileRelativePathAsc);
+                                    break;
+                                case "relativepath":
+                                    MergeSort(nodeSpan, tmpMemory.Memory.Span, FieldComparers.FileRelativePathDesc);
+                                    break;
+                                default:
+                                    Console.WriteLine("排序模式无效");
+                                    break;
+                            }
+                        }
+                        Console.WriteLine("排序完成！");
+                        break;
                     case "s":
                     case "save":
                         WriteXML(xmlPath, xml);
@@ -146,22 +369,22 @@ class Program
                     case "sa":
                     case "saveas":
                     case "save-as":
-                        if (arg.IsEmpty)
+                        if (arg1.IsEmpty)
                         {
                             Console.WriteLine("输入路径：");
-                            arg = Console.ReadLine().AsSpan().Trim().Trim('"');
+                            arg1 = Console.ReadLine().AsSpan().Trim().Trim('"');
                         }
-                        WriteXML(arg.ToString(), xml);
+                        WriteXML(arg1.ToString(), xml);
                         Console.WriteLine("保存成功！");
                         break;
                     case "f":
                     case "find":
                     case "query":
                     case "search":
-                        if (arg.IsEmpty)
+                        if (arg1.IsEmpty)
                         {
                             Console.WriteLine("输入搜索内容：");
-                            arg = Console.ReadLine().AsSpan().Trim().Trim('"');
+                            arg1 = Console.ReadLine().AsSpan().Trim().Trim('"');
                         }
                         foreach (XmlNode package in xml.ChildNodes)
                         {
@@ -176,8 +399,8 @@ class Program
                                     continue;
                                 string relativePathValue = relativePath.Value;
                                 string fileNameValue = fileName.Value;
-                                if (!relativePathValue.AsSpan().Contains(arg, StringComparison.CurrentCultureIgnoreCase)
-                                    && !fileNameValue.AsSpan().Contains(arg, StringComparison.CurrentCultureIgnoreCase))
+                                if (!relativePathValue.AsSpan().Contains(arg1, StringComparison.CurrentCultureIgnoreCase)
+                                    && !fileNameValue.AsSpan().Contains(arg1, StringComparison.CurrentCultureIgnoreCase))
                                     continue;
                                 if (first)
                                 {
@@ -378,6 +601,36 @@ class Program
     {
         byte[] bytes = ProtectedData.Unprotect(Convert.FromBase64String(data), DataProtectionScope.CurrentUser, Entropy);
         return Encoding.Unicode.GetString(bytes);
+    }
+    static void MergeSort<T, TComparer>(Span<T> arr, Span<T> tmp, TComparer comparer)
+        where TComparer : IComparer<T>
+    {
+        if (arr.Length <= 2)
+        {
+            if (arr.Length == 2)
+            {
+                ref T v0 = ref arr[0];
+                ref T v1 = ref arr[1];
+                if (comparer.Compare(v0, v1) > 0)
+                    (v0, v1) = (v1, v0);
+            }
+            return;
+        }
+        int mid = ((arr.Length - 1) >> 1) + 1;
+        int i = 0;
+        int j = mid;
+        int k = 0;
+        MergeSort(arr[..mid], tmp, comparer);
+        MergeSort(arr[mid..], tmp, comparer);
+        while (i < mid && j < arr.Length)
+            if (comparer.Compare(arr[i], arr[j]) <= 0)
+                tmp[k++] = arr[i++];
+            else
+                tmp[k++] = arr[j++];
+        if (i < mid)
+            arr[i..mid].CopyTo(arr[k..]);
+        // Although it looks strange, the merge sort implementation is correct.
+        tmp[..k].CopyTo(arr);
     }
     static ReadOnlySpan<byte> Entropy => [
 //      G         *         S         N         A         f         h         H

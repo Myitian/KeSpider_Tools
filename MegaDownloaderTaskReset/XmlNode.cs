@@ -72,23 +72,22 @@ public sealed class XmlNode(string name)
                 XmlNode node = new(reader.Name);
                 while (reader.MoveToNextAttribute())
                     node.Attributes.Add(new(reader.Name, reader.Value));
+                bool isEmpty = reader.IsEmptyElement;
                 reader.Read();
-                if (!reader.IsEmptyElement)
+                if (!isEmpty)
                 {
                     while (true)
                     {
                         XmlNode? child = ReadFrom(reader, out string? childtext);
                         if (child is not null)
-                        {
                             node.AppendChild(child);
-                            continue;
-                        }
-                        if (childtext is not null)
+                        else if (childtext is not null)
                         {
                             node.Value = childtext;
                             reader.Read();
                         }
-                        break;
+                        else
+                            break;
                     }
                 }
                 return node;
