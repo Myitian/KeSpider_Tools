@@ -76,7 +76,7 @@ class Program
             if (argx.TryGetString("--filter", out string? filter))
                 path_filter = new(filter, RegexOptions.ExplicitCapture | RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.CultureInvariant);
             if (argx.TryGetString("--resume", out string? resume))
-                resume_checkpoint = resume;
+                resume_checkpoint = Path.GetFullPath(resume);
             if (!argx.TryGetString("--hwaccel", out string? hwaccel))
                 hwaccel = null;
             if (!argx.TryGetString("--decoder", out string? decoder))
@@ -88,7 +88,9 @@ class Program
             bool waiting_checkpoint = !resume_checkpoint.IsEmpty;
             using FileStream fs = File.Open(output, FileMode.Create, FileAccess.Write, FileShare.Read);
             using StreamWriter sw = new(fs, Encoding.UTF8);
-            HashSet<string>? visited = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? [] : null;
+
+            HashSet<FileID> visited = [];
+
             foreach (string file in argx.UnknownArgs
             .SelectMany(it => File.Exists(it) ? [it]
                             : Directory.Exists(it) ? EnumerateAllFilesDefaultOrder(it)
@@ -100,27 +102,19 @@ class Program
                 if (waiting_checkpoint)
                 {
                     if (!resume_checkpoint.SequenceEqual(file))
+                    {
+                        AddVisited(visited, file);
                         continue;
+                    }
                     waiting_checkpoint = false;
                 }
                 Console.ResetColor();
                 Console.Error.WriteLine(file);
-                if (visited is not null)
+                if (!AddVisited(visited, file))
                 {
-                    try
-                    {
-                        if (!visited.Add(file))
-                        {
-                            Console.ForegroundColor = ConsoleColor.Yellow;
-                            Console.Error.WriteLine("Skipping visited");
-                            continue;
-                        }
-                        int colon = file.IndexOf(':');
-                        ReadOnlySpan<char> drive = colon < 0 ? [] : file.AsSpan(0, colon + 1);
-                        foreach (ReadOnlyMemory<char> link in new HardLinkTargetEnumerator(file))
-                            visited.Add(string.Concat(drive, link.Span));
-                    }
-                    catch { }
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.Error.WriteLine("Skipping visited");
+                    continue;
                 }
                 if (dry)
                 {
@@ -158,6 +152,18 @@ class Program
         finally
         {
             Console.ResetColor();
+        }
+
+        static bool AddVisited(HashSet<FileID> visited, string file)
+        {
+            try
+            {
+                FileID id = FileID.GetFromFile(file);
+                if (id != FileID.Invalid && !visited.Add(id))
+                    return false;
+            }
+            catch { }
+            return true;
         }
     }
     static IEnumerable<string> EnumerateAllFilesDefaultOrder(string directory)
